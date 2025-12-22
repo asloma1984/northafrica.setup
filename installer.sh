@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 # ===================== CONFIG =====================
 REG_URL="https://raw.githubusercontent.com/asloma1984/northafrica-public/main/register"
-ENC_URL="https://install.my-north-africa.com/private/north.enc"
+ENC_URL="https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc"
 KEY_FILE="/etc/northafrica/north.key"
 
 SESSION="northafrica"
