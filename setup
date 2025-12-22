@@ -1,1 +1,5 @@
+apt update -y && apt install -y git
 
+cd /root
+rm -rf northafrica.setup
+git clone https://github.com/asloma1984/northafrica.setup.git
