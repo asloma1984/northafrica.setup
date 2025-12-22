@@ -58,7 +58,7 @@ run_install(){
   info "VPS IP: $ip"
 
   check_license "$ip"
-  key="$(fetch_key)"
+  key="$(fetch_key)"; export NA_KEY="$key"
   [[ ${#key} -ge 16 ]] || die "Bad key length"
 
   tmp="$(mktemp -d)"
@@ -68,9 +68,10 @@ run_install(){
   curl -fsSL -o "$tmp/north.enc" "$ENC_URL" || die "Failed to download north.enc"
 
   info "Decrypting payload..."
-  openssl enc -aes-256-cbc -d -pbkdf2 \
+  openssl enc -aes-256-cbc -d -pbkdf2 -md sha256 -iter 200000 \
     -in "$tmp/north.enc" -out "$tmp/north.tar.gz" \
-    -pass pass:"$key" || die "Decrypt failed (wrong key?)"
+  unset NA_KEY
+    -pass env:NA_KEY || die "Decrypt failed (wrong key?)"
 
   tar -xzf "$tmp/north.tar.gz" -C "$tmp" || die "Extract failed"
   [[ -f "$tmp/premium.sh" ]] || die "premium.sh not found inside payload"
