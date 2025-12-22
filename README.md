@@ -1,1 +1,1 @@
-# northafrica-premium
+# northafrica.setup
