@@ -6,8 +6,8 @@ trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 REG_URL="${REG_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-public/main/register}"
 
 # ✅ encrypted payload (   repo )
-ENC_URL="${ENC_URL:-https://install.my-north-africa.com/private/north.enc}"
-SHA_URL="${SHA_URL:-https://install.my-north-africa.com/private/north.enc.sha256}"
+ENC_URL="${ENC_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc}"
+SHA_URL="${SHA_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc.sha256}"
 
 # ✅ endpoint  KEY  
 KEY_URL="${KEY_URL:-https://install.my-north-africa.com/key}"
