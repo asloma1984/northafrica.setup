@@ -2,70 +2,100 @@
 set -Eeuo pipefail
 trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 
-# ✅ register public
+# Public register
 REG_URL="${REG_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-public/main/register}"
 
-# ✅ encrypted payload (   repo )
+# Encrypted payload (public repo)
 ENC_URL="${ENC_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc}"
 SHA_URL="${SHA_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc.sha256}"
 
-# ✅ endpoint  KEY  
+# Key endpoint (Cloudflare Worker / your domain)
 KEY_URL="${KEY_URL:-https://install.my-north-africa.com/key}"
 
-get_ip(){ curl -4 -fsS https://api.ipify.org || curl -4 -fsS https://ipv4.icanhazip.com; }
-
-deny(){
-  clear
+deny() {
+  clear || true
   echo "404 NOT FOUND AUTOSCRIPT"
   echo
   echo "PERMISSION DENIED!"
   echo "Your VPS is NOT registered."
-  echo "VPS IP          : $MYIP"
-  echo "Subscriber Name : $NAME"
+  echo "VPS IP          : ${MYIP:-}"
+  echo "Subscriber Name : ${NAME:-}"
   echo
   echo "Please contact the developer for activation."
-  sleep 3
+  sleep 2
   exit 1
 }
 
-# -------- input
-read -r -p "Enter subscriber name (as registered): " NAME
-# تنظيف الاسم
-NAME="$(printf '%s' "$NAME" | sed -r 's/\x1B\[[0-9;]*[A-Za-z]//g; s/[^A-Za-z0-9._-]//g')"
+get_ip() {
+  local ip url
+  local urls=(
+    "https://api.ipify.org"
+    "https://ipv4.icanhazip.com"
+    "https://checkip.amazonaws.com"
+    "https://ifconfig.me/ip"
+    "https://ipinfo.io/ip"
+  )
+  for url in "${urls[@]}"; do
+    ip="$(curl -4 -fsS --max-time 8 "$url" 2>/dev/null | tr -d '\r\n ')" || ip=""
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      echo "$ip"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# --- Name input (single prompt, clean)
+if [[ -z "${NAME:-}" ]]; then
+  printf "Subscriber Name : " > /dev/tty
+  IFS= read -r NAME < /dev/tty
+  printf "\n" > /dev/tty
+fi
+
+# sanitize: keep only A-Za-z0-9._-
+NAME="$(printf "%s" "$NAME" \
+  | tr -d '\r\n' \
+  | tr -d '\000-\037\177' \
+  | tr -cd 'A-Za-z0-9._-')"
 [[ -n "$NAME" ]] || { echo "Subscriber name cannot be empty"; exit 1; }
 
-MYIP="$(get_ip)"
+MYIP="$(get_ip)" || deny
 
-# -------- fetch register + match (### NAME YYYY-MM-DD IP)
+# --- Register check: format "### NAME YYYY-MM-DD IP"
 REG_DATA="$(curl -fsSL "${REG_URL}?t=$(date +%s)" | tr -d '\r')" || deny
 LINE="$(echo "$REG_DATA" | awk -v ip="$MYIP" '$NF==ip{print; exit}')"
 [[ -n "$LINE" ]] || deny
 
 REG_NAME="$(echo "$LINE" | awk '{print $2}')"
-REG_EXP="$(echo "$LINE"  | awk '{print $3}')"
+REG_EXP="$(echo "$LINE" | awk '{print $3}')"
 
 [[ "$NAME" == "$REG_NAME" ]] || deny
 
-# expiry check
 today="$(date +%F)"
-if [[ "$today" > "$REG_EXP" ]]; then deny; fi
+if [[ "$today" > "$REG_EXP" ]]; then
+  deny
+fi
 
-# -------- get ENC_KEY automatically (from your server/worker)
-ENC_KEY="$(curl -fsSL "${KEY_URL}?ip=$MYIP&name=$NAME" | tr -d '\r\n ')" || deny
+# --- Fetch decrypt key from your KEY endpoint (no key sent manually to customers)
+ENC_KEY="$(curl -fsSL --max-time 10 "${KEY_URL}?ip=${MYIP}&name=${NAME}" | tr -d '\r\n ')" || deny
 [[ -n "$ENC_KEY" ]] || deny
 
-# -------- download + integrity + decrypt + run
-tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
 
 curl -fsSL -o "$tmpdir/north.enc" "$ENC_URL"
 curl -fsSL -o "$tmpdir/north.enc.sha256" "$SHA_URL"
+
 got="$(sha256sum "$tmpdir/north.enc" | awk '{print $1}')"
 exp="$(tr -d '\r\n ' < "$tmpdir/north.enc.sha256")"
-[[ "$got" == "$exp" ]] || { echo "[FAIL] Integrity check failed"; exit 1; }
+[[ "$got" == "$exp" ]] || { echo "[ERROR] Payload checksum mismatch"; exit 1; }
 
 openssl enc -aes-256-cbc -d -pbkdf2 -iter 200000 \
-  -in "$tmpdir/north.enc" -pass pass:"$ENC_KEY" \
-  -out "$tmpdir/premium.real"
+  -in "$tmpdir/north.enc" -out "$tmpdir/north.tar.gz" \
+  -pass pass:"$ENC_KEY"
 
-chmod +x "$tmpdir/premium.real"
-exec bash "$tmpdir/premium.real"
+mkdir -p /root/NorthAfrica
+tar -xzf "$tmpdir/north.tar.gz" -C /root/NorthAfrica
+
+chmod +x /root/NorthAfrica/premium.sh
+bash /root/NorthAfrica/premium.sh
