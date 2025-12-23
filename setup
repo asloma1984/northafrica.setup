@@ -7,18 +7,15 @@ DIR="/root/northafrica.setup"
 SESSION="northafrica"
 
 export DEBIAN_FRONTEND=noninteractive
-
-apt update -y
-apt install -y git tmux curl wget ca-certificates
+apt-get update -y
+apt-get install -y git tmux curl wget ca-certificates
 
 rm -rf "$DIR"
 git clone --depth 1 -b "$BRANCH" "https://github.com/$REPO.git" "$DIR"
-
 chmod +x "$DIR/installer.sh"
 
-# Run in tmux (like your friend's style)
 if [[ -z "${TMUX:-}" ]]; then
-  tmux new-session -d -s "$SESSION" "bash $DIR/installer.sh; echo; echo 'DONE ✅'; read -n 1"
+  tmux new-session -d -s "$SESSION" "bash $DIR/installer.sh 2>&1 | tee /var/log/northafrica-install.log; echo DONE; read -n 1"
   echo "Install is running in tmux: $SESSION"
   echo "Attach: tmux attach -t $SESSION"
   exit 0
