@@ -1,16 +1,42 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
 trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 
-# Public register
+# ==========================================================
+# NorthAfrica Setup Installer (Encrypted Payload Bootstrap)
+# - Checks VPS IP registration (optional but recommended)
+# - Downloads encrypted payload + sha256
+# - Verifies sha256 integrity
+# - Fetches decryption key from KEY_URL (allowed VPS only)
+# - Decrypts + extracts payload
+# - Runs premium.sh from extracted payload
+# ==========================================================
+
+# ====== CONFIG (override via environment variables) ======
 REG_URL="${REG_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-public/main/register}"
 
-# Encrypted payload (public repo)
 ENC_URL="${ENC_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc}"
 SHA_URL="${SHA_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc.sha256}"
 
-# Key endpoint (Cloudflare Worker / your domain)
+# Key endpoint (Cloudflare Worker / your domain) - returns the decryption key for allowed VPS only
 KEY_URL="${KEY_URL:-https://install.my-north-africa.com/key}"
+
+WORKDIR="${WORKDIR:-/tmp/northafrica-install}"
+OUT_TAR="${OUT_TAR:-$WORKDIR/north.tar.gz}"
+OUT_DIR="${OUT_DIR:-$WORKDIR/payload}"
+
+say() { echo -e "==> $*"; }
+
+need_root() {
+  [[ $(id -u) -eq 0 ]] || { echo "Please run as root."; exit 1; }
+}
+
+get_ip() {
+  curl -fsS https://api.ipify.org 2>/dev/null \
+    || curl -fsS https://ifconfig.me 2>/dev/null \
+    || echo ""
+}
 
 deny() {
   clear || true
@@ -18,84 +44,61 @@ deny() {
   echo
   echo "PERMISSION DENIED!"
   echo "Your VPS is NOT registered."
-  echo "VPS IP          : ${MYIP:-}"
-  echo "Subscriber Name : ${NAME:-}"
-  echo
-  echo "Please contact the developer for activation."
-  sleep 2
+  echo "VPS IP : ${MYIP:-unknown}"
   exit 1
 }
 
-get_ip() {
-  local ip url
-  local urls=(
-    "https://api.ipify.org"
-    "https://ipv4.icanhazip.com"
-    "https://checkip.amazonaws.com"
-    "https://ifconfig.me/ip"
-    "https://ipinfo.io/ip"
-  )
-  for url in "${urls[@]}"; do
-    ip="$(curl -4 -fsS --max-time 8 "$url" 2>/dev/null | tr -d '\r\n ')" || ip=""
-    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-      echo "$ip"
-      return 0
-    fi
-  done
-  return 1
-}
+need_root
+MYIP="$(get_ip)"
 
-# --- Name input (single prompt, clean)
-if [[ -z "${NAME:-}" ]]; then
-  printf "Subscriber Name : " > /dev/tty
-  IFS= read -r NAME < /dev/tty
-  printf "\n" > /dev/tty
+say "Prepare workdir: $WORKDIR"
+rm -rf "$WORKDIR"
+install -d -m 700 "$WORKDIR"
+
+say "1) Check registration (optional but recommended)"
+# If you want to allow install without register check, comment this block.
+if [[ -n "${MYIP}" ]]; then
+  if ! curl -fsSL "$REG_URL" | grep -qw "$MYIP"; then
+    deny
+  fi
+else
+  echo "[WARN] Could not detect public IP. Skipping register check."
 fi
 
-# sanitize: keep only A-Za-z0-9._-
-NAME="$(printf "%s" "$NAME" \
-  | tr -d '\r\n' \
-  | tr -d '\000-\037\177' \
-  | tr -cd 'A-Za-z0-9._-')"
-[[ -n "$NAME" ]] || { echo "Subscriber name cannot be empty"; exit 1; }
+say "2) Download encrypted payload + sha256"
+curl -fsSL -o "$WORKDIR/north.enc" "$ENC_URL"
+curl -fsSL -o "$WORKDIR/north.enc.sha256" "$SHA_URL"
 
-MYIP="$(get_ip)" || deny
+say "3) Verify sha256"
+REMOTE_SHA="$(tr -d '\r\n' < "$WORKDIR/north.enc.sha256")"
+LOCAL_SHA="$(sha256sum "$WORKDIR/north.enc" | awk '{print $1}')"
+echo "REMOTE_SHA=$REMOTE_SHA"
+echo "LOCAL_SHA =$LOCAL_SHA"
+[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]] || { echo "[FAIL] SHA mismatch"; exit 1; }
 
-# --- Register check: format "### NAME YYYY-MM-DD IP"
-REG_DATA="$(curl -fsSL "${REG_URL}?t=$(date +%s)" | tr -d '\r')" || deny
-LINE="$(echo "$REG_DATA" | awk -v ip="$MYIP" '$NF==ip{print; exit}')"
-[[ -n "$LINE" ]] || deny
+say "4) Fetch key from KEY_URL"
+KEY="$(curl -fsSL "$KEY_URL" | tr -d '\r\n')"
+[[ ${#KEY} -ge 32 ]] || { echo "[FAIL] Key looks too short"; deny; }
 
-REG_NAME="$(echo "$LINE" | awk '{print $2}')"
-REG_EXP="$(echo "$LINE" | awk '{print $3}')"
+say "5) Decrypt payload"
+openssl enc -aes-256-cbc -d -pbkdf2 \
+  -in "$WORKDIR/north.enc" -out "$OUT_TAR" \
+  -pass pass:"$KEY"
 
-[[ "$NAME" == "$REG_NAME" ]] || deny
+say "6) Extract payload"
+install -d -m 755 "$OUT_DIR"
+tar -xzf "$OUT_TAR" -C "$OUT_DIR"
 
-today="$(date +%F)"
-if [[ "$today" > "$REG_EXP" ]]; then
-  deny
+# The payload must contain ./premium.sh at the root
+if [[ -f "$OUT_DIR/premium.sh" ]]; then
+  say "7) Run installer (premium.sh)"
+  chmod +x "$OUT_DIR/premium.sh"
+  (cd "$OUT_DIR" && bash ./premium.sh)
+else
+  echo "[FAIL] premium.sh not found inside payload"
+  echo "Found files:"
+  find "$OUT_DIR" -maxdepth 2 -type f | head -n 50
+  exit 1
 fi
 
-# --- Fetch decrypt key from your KEY endpoint (no key sent manually to customers)
-ENC_KEY="$(curl -fsSL --max-time 10 "${KEY_URL}?ip=${MYIP}&name=${NAME}" | tr -d '\r\n ')" || deny
-[[ -n "$ENC_KEY" ]] || deny
-
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
-
-curl -fsSL -o "$tmpdir/north.enc" "$ENC_URL"
-curl -fsSL -o "$tmpdir/north.enc.sha256" "$SHA_URL"
-
-got="$(sha256sum "$tmpdir/north.enc" | awk '{print $1}')"
-exp="$(tr -d '\r\n ' < "$tmpdir/north.enc.sha256")"
-[[ "$got" == "$exp" ]] || { echo "[ERROR] Payload checksum mismatch"; exit 1; }
-
-openssl enc -aes-256-cbc -d -pbkdf2 -iter 200000 \
-  -in "$tmpdir/north.enc" -out "$tmpdir/north.tar.gz" \
-  -pass pass:"$ENC_KEY"
-
-mkdir -p /root/NorthAfrica
-tar -xzf "$tmpdir/north.tar.gz" -C /root/NorthAfrica
-
-chmod +x /root/NorthAfrica/premium.sh
-bash /root/NorthAfrica/premium.sh
+say "DONE ✅"
