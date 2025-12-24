@@ -48,6 +48,49 @@ deny() {
   exit 1
 }
 
+# Download helper with cache-busting to avoid GitHub CDN stale files
+dl() {
+  local url="$1" out="$2" ts sep
+  ts="$(date +%s)"
+  sep='?'; [[ "$url" == *\?* ]] && sep='&'
+  curl -fsSL -o "$out" "${url}${sep}t=${ts}"
+}
+
+# Try to fetch key in multiple formats to avoid KEY_URL 400 issues
+fetch_key() {
+  local k=""
+
+  # 1) Plain
+  k="$(curl -fsSL "$KEY_URL" 2>/dev/null || true)"
+  k="$(echo -n "$k" | tr -d '\r\n ')"
+  if [[ ${#k} -ge 32 ]]; then
+    echo -n "$k"
+    return 0
+  fi
+
+  # 2) With IP param
+  if [[ -n "${MYIP:-}" ]]; then
+    k="$(curl -fsSL "${KEY_URL}?ip=${MYIP}" 2>/dev/null || true)"
+    k="$(echo -n "$k" | tr -d '\r\n ')"
+    if [[ ${#k} -ge 32 ]]; then
+      echo -n "$k"
+      return 0
+    fi
+  fi
+
+  # 3) With header (some workers expect header instead of query)
+  if [[ -n "${MYIP:-}" ]]; then
+    k="$(curl -fsSL -H "X-Client-IP: ${MYIP}" "$KEY_URL" 2>/dev/null || true)"
+    k="$(echo -n "$k" | tr -d '\r\n ')"
+    if [[ ${#k} -ge 32 ]]; then
+      echo -n "$k"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 need_root
 MYIP="$(get_ip)"
 
@@ -66,8 +109,8 @@ else
 fi
 
 say "2) Download encrypted payload + sha256"
-curl -fsSL -o "$WORKDIR/north.enc" "$ENC_URL"
-curl -fsSL -o "$WORKDIR/north.enc.sha256" "$SHA_URL"
+dl "$ENC_URL" "$WORKDIR/north.enc"
+dl "$SHA_URL" "$WORKDIR/north.enc.sha256"
 
 say "3) Verify sha256"
 REMOTE_SHA="$(tr -d '\r\n' < "$WORKDIR/north.enc.sha256")"
@@ -77,7 +120,13 @@ echo "LOCAL_SHA =$LOCAL_SHA"
 [[ "$REMOTE_SHA" == "$LOCAL_SHA" ]] || { echo "[FAIL] SHA mismatch"; exit 1; }
 
 say "4) Fetch key from KEY_URL"
-KEY="$(curl -fsSL "$KEY_URL" | tr -d '\r\n')"
+if ! KEY="$(fetch_key)"; then
+  echo "[FAIL] Could not fetch key (KEY_URL returned error or empty key)."
+  echo "TIP: Your key service may require a parameter/header. Tested: plain, ?ip=, X-Client-IP."
+  echo "MYIP=${MYIP:-unknown}"
+  exit 1
+fi
+
 [[ ${#KEY} -ge 32 ]] || { echo "[FAIL] Key looks too short"; deny; }
 
 say "5) Decrypt payload"
