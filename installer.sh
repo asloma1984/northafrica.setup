@@ -6,7 +6,7 @@ trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 # ==========================================================
 # NorthAfrica Setup Installer (Encrypted Payload Bootstrap)
 # - Checks VPS IP registration (recommended)
-# - Downloads encrypted payload + sha256
+# - Downloads encrypted payload + sha256 (cache-bust)
 # - Verifies sha256 integrity
 # - Fetches decryption key from KEY_URL (allowed VPS only)
 # - Decrypts + extracts payload
@@ -19,7 +19,7 @@ REG_URL="${REG_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-pub
 ENC_URL="${ENC_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc}"
 SHA_URL="${SHA_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc.sha256}"
 
-# Key endpoint (Cloudflare Worker / your domain) - must return the KEY CONTENT (hex), not a file path
+# Cloudflare Worker / your domain (returns HEX decryption key for allowed VPS only)
 KEY_URL="${KEY_URL:-https://install.my-north-africa.com/key}"
 
 WORKDIR="${WORKDIR:-/tmp/northafrica-install}"
@@ -32,37 +32,6 @@ need_root() {
   [[ $(id -u) -eq 0 ]] || { echo "Please run as root."; exit 1; }
 }
 
-have_cmd() { command -v "$1" >/dev/null 2>&1; }
-
-install_deps_debian() {
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
-  apt-get install -y curl openssl ca-certificates tar coreutils
-}
-
-ensure_deps() {
-  local missing=0
-  for c in curl openssl tar sha256sum; do
-    if ! have_cmd "$c"; then
-      echo "[WARN] Missing command: $c"
-      missing=1
-    fi
-  done
-
-  if (( missing == 0 )); then
-    return 0
-  fi
-
-  # Auto install on Debian/Ubuntu
-  if have_cmd apt-get; then
-    say "Installing dependencies (curl/openssl/tar)..."
-    install_deps_debian
-  else
-    echo "[FAIL] Missing dependencies and no apt-get found. Install: curl openssl tar coreutils"
-    exit 1
-  fi
-}
-
 get_ip() {
   curl -fsS https://api.ipify.org 2>/dev/null \
     || curl -fsS https://ifconfig.me 2>/dev/null \
@@ -72,6 +41,7 @@ get_ip() {
 deny() {
   clear || true
   echo "404 NOT FOUND AUTOSCRIPT"
+  echo
   echo "PERMISSION DENIED!"
   echo "Your VPS is NOT registered."
   echo "VPS IP : ${MYIP:-unknown}"
@@ -79,14 +49,7 @@ deny() {
 }
 
 need_root
-ensure_deps
-
 MYIP="$(get_ip)"
-if [[ -z "${MYIP}" ]]; then
-  echo "[FAIL] Could not detect public IP."
-  exit 1
-fi
-
 TS="$(date +%s)"
 
 say "Prepare workdir: $WORKDIR"
@@ -94,8 +57,12 @@ rm -rf "$WORKDIR"
 install -d -m 700 "$WORKDIR"
 
 say "1) Check registration (recommended)"
-if ! curl -fsSL "$REG_URL" | grep -qw "$MYIP"; then
-  deny
+if [[ -n "${MYIP}" ]]; then
+  if ! curl -fsSL "${REG_URL}?t=${TS}" | grep -qw "$MYIP"; then
+    deny
+  fi
+else
+  echo "[WARN] Could not detect public IP. Skipping register check."
 fi
 
 say "2) Download encrypted payload + sha256 (cache-bust)"
@@ -110,19 +77,29 @@ echo "LOCAL_SHA =$LOCAL_SHA"
 [[ "$REMOTE_SHA" == "$LOCAL_SHA" ]] || { echo "[FAIL] SHA mismatch"; exit 1; }
 
 say "4) Fetch key from KEY_URL (must be HEX key)"
-KEY="$(curl -fsSL "${KEY_URL}?ip=${MYIP}&t=${TS}" | tr -d '\r\n')"
 
-# If Worker returns a file path like "/root/north.key" => wrong configuration
-if [[ "$KEY" == /* || "$KEY" == *"/"* ]]; then
-  echo "[FAIL] KEY_URL returned a file path: $KEY"
-  echo "Fix Worker to return the *key content (hex)* via Secret NA_KEY."
+# Print HTTP code + body for easier debugging
+KEY_RESP="$(curl -sS -w '\n%{http_code}' "${KEY_URL}?ip=${MYIP}&t=${TS}" || true)"
+KEY_CODE="$(echo "$KEY_RESP" | tail -n 1)"
+KEY_BODY="$(echo "$KEY_RESP" | head -n -1 | tr -d '\r\n')"
+
+if [[ "$KEY_CODE" != "200" ]]; then
+  echo "[FAIL] KEY_URL HTTP=$KEY_CODE"
+  echo "Body:"
+  echo "$KEY_BODY"
   exit 1
 fi
 
-# Validate hex key (recommended 64 hex chars from openssl rand -hex 32)
-if ! echo "$KEY" | grep -Eq '^[0-9a-fA-F]{32,128}$'; then
-  echo "[FAIL] Key is invalid (expected hex)."
-  deny
+KEY="$KEY_BODY"
+
+# Must be HEX and >= 32 chars (prefer 64 for aes-256 pass)
+if ! [[ "$KEY" =~ ^[0-9a-fA-F]+$ ]]; then
+  echo "[FAIL] Key is not HEX!"
+  exit 1
+fi
+if [[ ${#KEY} -lt 32 ]]; then
+  echo "[FAIL] Key looks too short (len=${#KEY})"
+  exit 1
 fi
 
 say "5) Decrypt payload"
@@ -142,7 +119,7 @@ if [[ -f "$OUT_DIR/premium.sh" ]]; then
 else
   echo "[FAIL] premium.sh not found inside payload"
   echo "Found files:"
-  find "$OUT_DIR" -maxdepth 2 -type f | head -n 80
+  find "$OUT_DIR" -maxdepth 2 -type f | head -n 50
   exit 1
 fi
 
