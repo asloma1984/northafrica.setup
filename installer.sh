@@ -5,6 +5,8 @@ trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 
 # ==========================================================
 # NorthAfrica Setup Installer (Encrypted Payload Bootstrap)
+# - Supports running via: curl ... | bash
+# - Fixes "not a terminal" by attaching stdin to /dev/tty
 # - Checks VPS IP registration (recommended)
 # - Downloads encrypted payload + sha256 (cache-bust)
 # - Verifies sha256 integrity
@@ -19,12 +21,22 @@ REG_URL="${REG_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-pub
 ENC_URL="${ENC_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc}"
 SHA_URL="${SHA_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc.sha256}"
 
-# Key endpoint (Cloudflare Worker / your domain)
+# Cloudflare Worker / custom domain endpoint
 KEY_URL="${KEY_URL:-https://install.my-north-africa.com/key}"
 
 WORKDIR="${WORKDIR:-/tmp/northafrica-install}"
 OUT_TAR="${OUT_TAR:-$WORKDIR/north.tar.gz}"
 OUT_DIR="${OUT_DIR:-$WORKDIR/payload}"
+
+DEBUG="${DEBUG:-0}"
+
+# If script is executed via pipe, stdin is not a TTY.
+# Attach stdin to /dev/tty so interactive scripts (premium.sh) work.
+if [[ -t 1 && ! -t 0 && -r /dev/tty ]]; then
+  exec </dev/tty
+fi
+
+(( DEBUG == 1 )) && set -x
 
 say() { echo -e "==> $*"; }
 
@@ -38,8 +50,12 @@ get_ip() {
     || echo ""
 }
 
-deny() {
+safe_clear() {
   [[ -t 1 ]] && clear || true
+}
+
+deny() {
+  safe_clear
   echo "404 NOT FOUND AUTOSCRIPT"
   echo
   echo "PERMISSION DENIED!"
@@ -76,7 +92,7 @@ echo "REMOTE_SHA=$REMOTE_SHA"
 echo "LOCAL_SHA =$LOCAL_SHA"
 [[ "$REMOTE_SHA" == "$LOCAL_SHA" ]] || { echo "[FAIL] SHA mismatch"; exit 1; }
 
-say "4) Fetch key from KEY_URL (must be HEX key)"
+say "4) Fetch key from KEY_URL (must be HEX-64)"
 HTTP_CODE="$(curl -sS -w '%{http_code}' -o "$WORKDIR/key.txt" "${KEY_URL}?ip=${MYIP}&t=${TS}" || true)"
 if [[ "$HTTP_CODE" != "200" ]]; then
   echo "[FAIL] KEY_URL HTTP=$HTTP_CODE"
@@ -98,17 +114,31 @@ install -d -m 755 "$OUT_DIR"
 tar -xzf "$OUT_TAR" -C "$OUT_DIR"
 
 say "7) Find premium.sh"
-PREMIUM="$(find "$OUT_DIR" -maxdepth 3 -type f -name "premium.sh" | head -n 1 || true)"
+# Prefer root premium.sh if exists; otherwise find inside dist/ or subfolders
+PREMIUM=""
+if [[ -f "$OUT_DIR/premium.sh" ]]; then
+  PREMIUM="$OUT_DIR/premium.sh"
+else
+  PREMIUM="$(find "$OUT_DIR" -maxdepth 3 -type f -name "premium.sh" | head -n 1 || true)"
+fi
+
 if [[ -z "${PREMIUM}" ]]; then
   echo "[FAIL] premium.sh not found inside payload"
   echo "Found files (top):"
-  find "$OUT_DIR" -maxdepth 2 -type f | head -n 80
+  find "$OUT_DIR" -maxdepth 2 -type f | head -n 120
   exit 1
 fi
+
 echo "Found: $PREMIUM"
 
 say "8) Run installer (premium.sh)"
 chmod +x "$PREMIUM"
-(cd "$(dirname "$PREMIUM")" && bash "./$(basename "$PREMIUM")")
+
+# Make sure premium.sh also gets a TTY if available
+if [[ -r /dev/tty ]]; then
+  (cd "$(dirname "$PREMIUM")" && bash "./$(basename "$PREMIUM")" </dev/tty)
+else
+  (cd "$(dirname "$PREMIUM")" && bash "./$(basename "$PREMIUM")")
+fi
 
 say "DONE ✅"
