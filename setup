@@ -1,24 +1,66 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+# ------------------------------------------------------------
+# NorthAfrica Setup Bootstrap (Public)
+# - Installs required packages
+# - Clones the northafrica.setup repo
+# - Runs installer.sh inside tmux (recommended)
+# Log: /var/log/northafrica-install.log
+# ------------------------------------------------------------
+
+trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND rc=$?" >&2' ERR
 
 REPO="asloma1984/northafrica.setup"
 BRANCH="main"
 DIR="/root/northafrica.setup"
 SESSION="northafrica"
+LOG="/var/log/northafrica-install.log"
+
+need_root() {
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo "Please run as root."
+    exit 1
+  fi
+}
+
+msg() { echo -e "$*"; }
+
+need_root
 
 export DEBIAN_FRONTEND=noninteractive
+
+msg "[1/4] Updating packages..."
 apt-get update -y
+
+msg "[2/4] Installing dependencies (git, tmux, curl, wget, ca-certificates)..."
 apt-get install -y git tmux curl wget ca-certificates
 
+msg "[3/4] Downloading installer repo: $REPO ($BRANCH)"
 rm -rf "$DIR"
 git clone --depth 1 -b "$BRANCH" "https://github.com/$REPO.git" "$DIR"
+
+if [[ ! -f "$DIR/installer.sh" ]]; then
+  echo "[ERROR] installer.sh not found in $DIR"
+  exit 1
+fi
+
 chmod +x "$DIR/installer.sh"
 
+# If not already inside tmux, run the installer in a new tmux session
 if [[ -z "${TMUX:-}" ]]; then
-  tmux new-session -d -s "$SESSION" "bash $DIR/installer.sh 2>&1 | tee /var/log/northafrica-install.log; echo DONE; read -n 1"
-  echo "Install is running in tmux: $SESSION"
-  echo "Attach: tmux attach -t $SESSION"
+  msg "[4/4] Starting install in tmux session: $SESSION"
+  msg "Log file: $LOG"
+
+  # Start in tmux, pipe output to log
+  tmux new-session -d -s "$SESSION" "bash '$DIR/installer.sh' 2>&1 | tee '$LOG'; echo; echo '[DONE] Installation finished.'; echo 'Press any key to close...'; read -n 1"
+
+  msg "✅ Install is running in tmux: $SESSION"
+  msg "Attach with: tmux attach -t $SESSION"
+  msg "Watch log with: tail -f $LOG"
   exit 0
 fi
 
+# If already inside tmux, just run directly
+msg "[4/4] Running installer.sh..."
 bash "$DIR/installer.sh"
