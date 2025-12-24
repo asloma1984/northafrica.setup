@@ -10,7 +10,7 @@ trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 # - Verifies sha256 integrity
 # - Fetches decryption key from KEY_URL (allowed VPS only)
 # - Decrypts + extracts payload
-# - Runs premium.sh from extracted payload
+# - Finds and runs premium.sh from extracted payload
 # ==========================================================
 
 # ====== CONFIG (override via environment variables) ======
@@ -19,7 +19,7 @@ REG_URL="${REG_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-pub
 ENC_URL="${ENC_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc}"
 SHA_URL="${SHA_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc.sha256}"
 
-# Cloudflare Worker / your domain (returns HEX decryption key for allowed VPS only)
+# Key endpoint (Cloudflare Worker / your domain)
 KEY_URL="${KEY_URL:-https://install.my-north-africa.com/key}"
 
 WORKDIR="${WORKDIR:-/tmp/northafrica-install}"
@@ -39,7 +39,7 @@ get_ip() {
 }
 
 deny() {
-  clear || true
+  [[ -t 1 ]] && clear || true
   echo "404 NOT FOUND AUTOSCRIPT"
   echo
   echo "PERMISSION DENIED!"
@@ -77,30 +77,16 @@ echo "LOCAL_SHA =$LOCAL_SHA"
 [[ "$REMOTE_SHA" == "$LOCAL_SHA" ]] || { echo "[FAIL] SHA mismatch"; exit 1; }
 
 say "4) Fetch key from KEY_URL (must be HEX key)"
-
-# Print HTTP code + body for easier debugging
-KEY_RESP="$(curl -sS -w '\n%{http_code}' "${KEY_URL}?ip=${MYIP}&t=${TS}" || true)"
-KEY_CODE="$(echo "$KEY_RESP" | tail -n 1)"
-KEY_BODY="$(echo "$KEY_RESP" | head -n -1 | tr -d '\r\n')"
-
-if [[ "$KEY_CODE" != "200" ]]; then
-  echo "[FAIL] KEY_URL HTTP=$KEY_CODE"
+HTTP_CODE="$(curl -sS -w '%{http_code}' -o "$WORKDIR/key.txt" "${KEY_URL}?ip=${MYIP}&t=${TS}" || true)"
+if [[ "$HTTP_CODE" != "200" ]]; then
+  echo "[FAIL] KEY_URL HTTP=$HTTP_CODE"
   echo "Body:"
-  echo "$KEY_BODY"
-  exit 1
+  cat "$WORKDIR/key.txt" || true
+  deny
 fi
 
-KEY="$KEY_BODY"
-
-# Must be HEX and >= 32 chars (prefer 64 for aes-256 pass)
-if ! [[ "$KEY" =~ ^[0-9a-fA-F]+$ ]]; then
-  echo "[FAIL] Key is not HEX!"
-  exit 1
-fi
-if [[ ${#KEY} -lt 32 ]]; then
-  echo "[FAIL] Key looks too short (len=${#KEY})"
-  exit 1
-fi
+KEY="$(tr -d '\r\n ' < "$WORKDIR/key.txt")"
+echo "$KEY" | grep -qiE '^[0-9a-f]{64}$' || { echo "[FAIL] Key is not valid HEX-64"; deny; }
 
 say "5) Decrypt payload"
 openssl enc -aes-256-cbc -d -pbkdf2 \
@@ -111,16 +97,18 @@ say "6) Extract payload"
 install -d -m 755 "$OUT_DIR"
 tar -xzf "$OUT_TAR" -C "$OUT_DIR"
 
-# The payload must contain ./premium.sh at the root
-if [[ -f "$OUT_DIR/premium.sh" ]]; then
-  say "7) Run installer (premium.sh)"
-  chmod +x "$OUT_DIR/premium.sh"
-  (cd "$OUT_DIR" && bash ./premium.sh)
-else
+say "7) Find premium.sh"
+PREMIUM="$(find "$OUT_DIR" -maxdepth 3 -type f -name "premium.sh" | head -n 1 || true)"
+if [[ -z "${PREMIUM}" ]]; then
   echo "[FAIL] premium.sh not found inside payload"
-  echo "Found files:"
-  find "$OUT_DIR" -maxdepth 2 -type f | head -n 50
+  echo "Found files (top):"
+  find "$OUT_DIR" -maxdepth 2 -type f | head -n 80
   exit 1
 fi
+echo "Found: $PREMIUM"
+
+say "8) Run installer (premium.sh)"
+chmod +x "$PREMIUM"
+(cd "$(dirname "$PREMIUM")" && bash "./$(basename "$PREMIUM")")
 
 say "DONE ✅"
