@@ -10,7 +10,7 @@ trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 # - Verifies sha256 integrity
 # - Fetches decryption key from KEY_URL (allowed VPS only)
 # - Decrypts + extracts payload
-# - Runs premium.sh
+# - Runs premium.sh with TTY support
 # ==========================================================
 
 # ====== CONFIG (override via env) ======
@@ -30,7 +30,7 @@ need_root(){
 }
 
 safe_clear(){
-  # avoid "not a terminal" messages when output is piped/redirected
+  # prevent "not a terminal" noise when piped
   if [[ -t 1 ]]; then clear || true; fi
 }
 
@@ -51,13 +51,10 @@ deny(){
 }
 
 fetch_key(){
-  # Tries KEY_URL without ip first (best security).
-  # If your Worker still requires ip param, it falls back to ?ip=
   local ts="$1"
   local key_file="$WORKDIR/key.txt"
   local http body
 
-  # 1) no ip
   http="$(curl -sS -w '%{http_code}' -o "$key_file" "${KEY_URL}?t=${ts}" || true)"
   body="$(tr -d '\r\n' < "$key_file" 2>/dev/null || true)"
   if [[ "$http" == "200" ]]; then
@@ -65,7 +62,7 @@ fetch_key(){
     return 0
   fi
 
-  # 2) fallback with ip (compat)
+  # fallback: pass ip for compatibility (Worker will validate it)
   http="$(curl -sS -w '%{http_code}' -o "$key_file" "${KEY_URL}?ip=${MYIP}&t=${ts}" || true)"
   body="$(tr -d '\r\n' < "$key_file" 2>/dev/null || true)"
   if [[ "$http" == "200" ]]; then
@@ -79,6 +76,17 @@ fetch_key(){
   return 1
 }
 
+run_with_tty(){
+  # If installer is piped, stdin isn't a TTY. Use /dev/tty if available.
+  if [[ -t 0 ]]; then
+    bash "$1"
+  elif [[ -r /dev/tty ]]; then
+    bash "$1" </dev/tty
+  else
+    bash "$1"
+  fi
+}
+
 need_root
 TS="$(date +%s)"
 MYIP="$(get_ip)"
@@ -89,7 +97,6 @@ install -d -m 700 "$WORKDIR"
 
 say "1) Check registration (recommended)"
 if [[ -n "${MYIP}" ]]; then
-  # cache-bust to avoid GitHub/ISP cache delays
   if ! curl -fsSL "${REG_URL}?t=${TS}" | grep -qw "$MYIP"; then
     deny
   fi
@@ -122,15 +129,14 @@ say "6) Extract payload"
 install -d -m 755 "$OUT_DIR"
 tar -xzf "$OUT_TAR" -C "$OUT_DIR"
 
-# Your repo contains premium.sh in root (and also dist/premium.sh)
 if [[ -f "$OUT_DIR/premium.sh" ]]; then
   say "7) Run installer (premium.sh)"
   chmod +x "$OUT_DIR/premium.sh"
-  (cd "$OUT_DIR" && bash ./premium.sh)
+  (cd "$OUT_DIR" && run_with_tty "./premium.sh")
 elif [[ -f "$OUT_DIR/dist/premium.sh" ]]; then
   say "7) Run installer (dist/premium.sh)"
   chmod +x "$OUT_DIR/dist/premium.sh"
-  (cd "$OUT_DIR/dist" && bash ./premium.sh)
+  (cd "$OUT_DIR/dist" && run_with_tty "./premium.sh")
 else
   echo "[FAIL] premium.sh not found inside payload"
   echo "Found files:"
