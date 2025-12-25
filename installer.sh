@@ -90,17 +90,17 @@ else
 fi
 
 say "2) Download encrypted payload + sha256 (cache-bust)"
-curl -fsSL --connect-timeout 20 -o "$WORKDIR/north.enc"        "${ENC_URL}?t=${TS}"
-curl -fsSL --connect-timeout 20 -o "$WORKDIR/north.enc.sha256" "${SHA_URL}?t=${TS}"
+curl -fsSL --connect-timeout 20 -o "$WORKDIR/north.setup.enc"        "${ENC_URL}?t=${TS}"
+curl -fsSL --connect-timeout 20 -o "$WORKDIR/north.setup.enc.sha256" "${SHA_URL}?t=${TS}"
 
 say "3) Verify sha256"
-REMOTE_SHA="$(awk '{print $1}' "$WORKDIR/north.enc.sha256" | tr -d '\r\n')"
-LOCAL_SHA="$(sha256sum "$WORKDIR/north.enc" | awk '{print $1}')"
+REMOTE_SHA="$(awk '{print $1}' "$WORKDIR/north.setup.enc.sha256" | tr -d '\r\n')"
+LOCAL_SHA="$(sha256sum "$WORKDIR/north.setup.enc" | awk '{print $1}')"
 [[ -n "$REMOTE_SHA" ]] || { echo "[FAIL] Empty remote sha"; exit 1; }
 [[ "$REMOTE_SHA" == "$LOCAL_SHA" ]] || { echo "[FAIL] SHA mismatch"; exit 1; }
 
 say "4) Fetch key from KEY_URL"
-HTTP_CODE="$(curl -sS -w '%{http_code}' -o "$WORKDIR/key.txt" \
+HTTP_CODE="$(curl -4 -sS -w '%{http_code}' -o "$WORKDIR/key.txt" \
   --connect-timeout 20 \
   "${KEY_URL}?t=${TS}" || true)"
 
@@ -116,7 +116,7 @@ echo "$KEY" | grep -qiE '^[0-9a-f]{64}$' || { echo "[FAIL] INVALID_KEY_FORMAT"; 
 
 say "5) Decrypt payload"
 openssl enc -aes-256-cbc -d -pbkdf2 \
-  -in "$WORKDIR/north.enc" -out "$OUT_TAR" \
+  -in "$WORKDIR/north.setup.enc" -out "$OUT_TAR" \
   -pass pass:"$KEY"
 
 say "6) Extract payload"
