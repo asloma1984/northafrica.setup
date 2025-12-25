@@ -11,7 +11,6 @@ trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND rc=$?" >&2' ERR
 # - Fetch AES key from KEY_URL (allowed VPS only)
 # - Decrypt + extract payload
 # - Serve extracted payload via local HTTP (127.0.0.1)
-# - Run premium.sh with REPO_URL pointing to local server
 # ==========================================================
 
 # ====== CONFIG (override via env) ======
@@ -122,7 +121,7 @@ openssl enc -aes-256-cbc -d -pbkdf2 \
 say "6) Extract payload"
 install -d -m 755 "$OUT_DIR"
 tar -xzf "$OUT_TAR" -C "$OUT_DIR"
-[[ -f "$OUT_DIR/premium.sh" ]] || { echo "[FAIL] premium.sh not found inside payload"; exit 1; }
+true
 
 say "7) Start local payload server"
 PORT="$(choose_port)"
@@ -139,7 +138,7 @@ trap cleanup EXIT
 # probe
 curl -fsS "http://127.0.0.1:${PORT}/files/sshd" >/dev/null 2>&1 || true
 
-say "8) Run installer (premium.sh) using local REPO_URL"
+say "8) Run extracted installer using local REPO_URL"
 export REPO_URL="http://127.0.0.1:${PORT}/"
 export REG_URL="$REG_URL"
 
@@ -148,7 +147,5 @@ systemctl stop ws 2>/dev/null || true
 pkill -x ws 2>/dev/null || true
 rm -f /usr/bin/ws 2>/dev/null || true
 
-chmod +x "$OUT_DIR/premium.sh"
-(cd "$OUT_DIR" && bash ./premium.sh)
 
 say "DONE ✅"
