@@ -121,7 +121,7 @@ openssl enc -aes-256-cbc -d -pbkdf2 \
 say "6) Extract payload"
 install -d -m 755 "$OUT_DIR"
 tar -xzf "$OUT_TAR" -C "$OUT_DIR"
-true
+  ( [[ -f "$OUT_DIR/north.setup" || -f "$OUT_DIR/premium.sh" || -f "$OUT_DIR/setup" ]] ) || { echo "[FAIL] No installer file in payload"; exit 1; }
 
 say "7) Start local payload server"
 PORT="$(choose_port)"
@@ -144,14 +144,14 @@ export REG_URL="$REG_URL"
   # Detect extracted entry file
   ENTRY=""
   for f in north.setup premium.sh setup; do
-    if [[ -f "$OUT_DIR/$f" ]]; then
-      ENTRY="$OUT_DIR/$f"
-      break
-    fi
+  if [[ -f "$OUT_DIR/$f" ]]; then
+    ENTRY="$OUT_DIR/$f"
+    break
+  fi
   done
 
   if [[ -z "$ENTRY" ]]; then
-    ENTRY="$(find "$OUT_DIR" -maxdepth 1 -type f | head -n 1 || true)"
+  ENTRY="$(find "$OUT_DIR" -maxdepth 1 -type f | head -n 1 || true)"
   fi
 
   [[ -n "$ENTRY" && -f "$ENTRY" ]] || { echo "[FAIL] No entry file extracted"; exit 1; }
