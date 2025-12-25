@@ -17,8 +17,8 @@ trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND rc=$?" >&2' ERR
 # ====== CONFIG (override via env) ======
 REG_URL="${REG_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-public/main/register}"
 
-ENC_URL="${ENC_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc}"
-SHA_URL="${SHA_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.enc.sha256}"
+ENC_URL="${ENC_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.setup.enc}"
+SHA_URL="${SHA_URL:-https://raw.githubusercontent.com/asloma1984/northafrica-payload/main/north.setup.enc.sha256}"
 
 KEY_URL="${KEY_URL:-https://install.my-north-africa.com/key}"
 
