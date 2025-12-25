@@ -141,6 +141,23 @@ curl -fsS "http://127.0.0.1:${PORT}/files/sshd" >/dev/null 2>&1 || true
 say "8) Run extracted installer using local REPO_URL"
 export REPO_URL="http://127.0.0.1:${PORT}/"
 export REG_URL="$REG_URL"
+  # Detect extracted entry file
+  ENTRY=""
+  for f in north.setup premium.sh setup; do
+    if [[ -f "$OUT_DIR/$f" ]]; then
+      ENTRY="$OUT_DIR/$f"
+      break
+    fi
+  done
+
+  if [[ -z "$ENTRY" ]]; then
+    ENTRY="$(find "$OUT_DIR" -maxdepth 1 -type f | head -n 1 || true)"
+  fi
+
+  [[ -n "$ENTRY" && -f "$ENTRY" ]] || { echo "[FAIL] No entry file extracted"; exit 1; }
+  chmod +x "$ENTRY"
+  echo "==> Running: $ENTRY"
+  (cd "$OUT_DIR" && bash "./$(basename "$ENTRY")")
 
 # avoid "Text file busy" on reinstall
 systemctl stop ws 2>/dev/null || true
