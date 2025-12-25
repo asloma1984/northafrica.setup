@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+CIPHER="${CIPHER:-aes-256-cbc}"
+ITER="${ITER:-200000}"
+MDALG="${MDALG:-sha256}"
+
 set -Eeuo pipefail
 
 trap 'echo "[FAIL] line=$LINENO cmd=$BASH_COMMAND rc=$?" >&2' ERR
