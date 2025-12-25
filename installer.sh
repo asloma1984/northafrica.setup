@@ -118,7 +118,7 @@ KEY="$(tr -d '\r\n ' < "$WORKDIR/key.txt")"
 echo "$KEY" | grep -qiE '^[0-9a-f]{64}$' || { echo "[FAIL] INVALID_KEY_FORMAT"; deny; }
 
 say "5) Decrypt payload"
-openssl enc -aes-256-cbc -d -pbkdf2 \
+openssl enc -${CIPHER} -d -pbkdf2 -iter ${ITER} -md ${MDALG} \
   -in "$WORKDIR/north.setup.enc" -out "$OUT_TAR" \
   -pass pass:"$KEY"
 
