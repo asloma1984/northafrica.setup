@@ -55,7 +55,7 @@ if [[ -z "${TMUX:-}" ]]; then
   # Start in tmux, pipe output to log
     # If session already exists, attach instead of failing
   if tmux has-session -t "" 2>/dev/null; then
-    msg "⚠️  Install session already exists: "
+    msg "⚠️  Install session already exists: $SESSION"
     msg "Attach with: tmux attach -t "
     msg "Watch log with: tail -f "
     exit 0
