@@ -52,21 +52,19 @@ if [[ -z "${TMUX:-}" ]]; then
   msg "[4/4] Starting install in tmux session: $SESSION"
   msg "Log file: $LOG"
 
-  # Start in tmux, pipe output to log
   # If session already exists, attach instead of failing
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     msg "⚠️  Install session already exists: $SESSION"
-    msg "Attach with: tmux attach -t $SESSION"
-    msg "Watch log with: tail -f $LOG"
-    exit 0
+    msg "Attaching now..."
+    exec tmux attach -t "$SESSION"
   fi
 
+  # Start in tmux, pipe output to log
   tmux new-session -d -s "$SESSION" "bash '$DIR/installer.sh' 2>&1 | tee '$LOG'; echo; echo '[DONE] Installation finished.'; echo 'Press any key to close...'; read -n 1"
 
-  msg "✅ Install is running in tmux: $SESSION"
-  msg "Attach with: tmux attach -t $SESSION"
-  msg "Watch log with: tail -f $LOG"
-  exit 0
+  msg "✅  Install is running in tmux: $SESSION"
+  msg "Attaching now..."
+  exec tmux attach -t "$SESSION"
 fi
 
 # If already inside tmux, just run directly
