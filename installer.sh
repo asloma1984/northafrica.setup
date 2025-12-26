@@ -118,9 +118,9 @@ KEY="$(tr -d '\r\n ' < "$WORKDIR/key.txt")"
 echo "$KEY" | grep -qiE '^[0-9a-f]{64}$' || { echo "[FAIL] INVALID_KEY_FORMAT"; deny; }
 
 say "5) Decrypt payload"
-openssl enc -${CIPHER} -d -pbkdf2 -iter ${ITER} -md ${MDALG} \
+openssl enc -"${CIPHER}" -d -pbkdf2 -iter "${ITER}" -md "${MDALG}" \
   -in "$WORKDIR/north.setup.enc" -out "$OUT_TAR" \
-  -pass pass:"$KEY"
+  -pass "pass:${KEY}"
 
 say "6) Extract payload"
 install -d -m 755 "$OUT_DIR"
@@ -166,7 +166,6 @@ export REG_URL="$REG_URL"
 # avoid "Text file busy" on reinstall
 systemctl stop ws 2>/dev/null || true
 pkill -x ws 2>/dev/null || true
-rm -f /usr/bin/ws 2>/dev/null || true
 
 
 say "DONE ✅"
